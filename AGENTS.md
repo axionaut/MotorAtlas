@@ -21,4 +21,4 @@ NHTSA vPIC → EPA FuelEconomy → EEA CO₂ → VehiclesDB → Wikidata lineage
 
 ## Before committing
 
-Run `pnpm run build`. After schema edits, run `pnpm run db:generate`, inspect the generated SQL, and append `PRAGMA optimize;` when new indexes are created.
+Run `pnpm test` and `pnpm run build`. Storage changes require transactional persistence and backup round-trip checks. The app is static on GitHub Pages; do not introduce ChatGPT hosting or server dependencies.

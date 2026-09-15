@@ -1,80 +1,45 @@
 # MotorAtlas architecture
 
-MotorAtlas is a global automotive evidence system. It stores vehicle identities separately from factual observations so disagreement remains visible and resolvable.
+MotorAtlas is a static React 19 application built with Vite and Tailwind 4, published on GitHub Pages at https://axionaut.github.io/MotorAtlas/. It has no server endpoints, sign-in provider, ChatGPT dependency, or Cloudflare runtime.
+
+## Runtime and persistence
+
+The browser renders the UI, reads/writes IndexedDB, and fetches NHTSA directly using its public CORS-enabled API. lib/browser-api.ts provides an in-process interface; its operation paths are never HTTP requests. No backend proxy or credentials are required.
+
+The motoratlas-corpus IndexedDB database has nine stores: sources, makes, models, generations, variants, observations, source_crosswalks, ingestion_runs, conflicts. Each store uses id as its key. Sources are initialized only when the database is first created. Transactions serialize writes across tabs and commit all identity/evidence changes atomically. A failed transaction leaves stored data unchanged.
+
+Data belongs to each browser installation. This release does not provide a shared editable cloud corpus or automatic cross-device synchronization. Export/import transfers a versioned JSON backup with all provenance. Imports validate references and merge additively; conflicting record IDs abort without overwriting stored records.
+
+The previous hosted D1 database was inspected during migration on 2026-09-15: all eight non-source tables were empty; only the ten source registry rows existed. The registry is preserved in lib/source-catalog.ts. No old service is consulted at runtime.
 
 ## Identity graph
 
-```text
 make → model → generation → market/model-year variant
-                              ↑
-                    external source crosswalks
-```
 
-The variant is the comparison unit. A United States Corolla LE and a Japanese Corolla W×B can share lineage without being treated as the same product.
+The variant is the comparison unit. External source IDs live in source_crosswalks; internal identity keys are UUIDs. NHTSA model-year pulls create US identity-only placeholders with unknown trim, body, powertrain and generation. They do not pretend to resolve detailed configurations. Crosswalks for make, model and US model-year identity make repeat pulls idempotent without resetting attached evidence.
 
 ## Evidence model
 
-An observation records one source's assertion about one variant and one attribute:
+Each observation records variant, attribute, value, unit, source, source URL, market, method, effective dates, retrieval time, confidence and original value. Another source's assertion creates a separate observation. Competing values and units produce conflict records without deleting either observation.
 
-```text
-variant_id + attribute_key + value + unit
-+ source_id + source_url + market + method
-+ effective dates + retrieved_at + confidence + raw_value
-```
+Comparison chooses lowest source authority rank, then highest confidence, with a stable ID tie-break. Missing evidence stays empty. Unit conversion, protocol-aware safety comparison and explicit conflict resolution remain future work. Completeness is a simple attribute-coverage indicator, not a vehicle quality score.
 
-The comparison endpoint currently chooses the lowest `authority_rank`, then the highest confidence, for headline display. All observations remain available in the vehicle evidence ledger.
+Authority precedence: regulatory; OEM/government register; safety agencies; open catalogues; knowledge graphs; measured tests; editorial/user evidence. Claimed, regulatory, measured, owner-reported and derived methods remain distinct.
 
-## Source authority
+## Ingestion
 
-1. Homologation and regulatory data
-2. OEM technical documents and government registers
-3. NCAP and testing authorities
-4. Open canonical catalogues
-5. Knowledge graphs
-6. Independent instrumented tests
-7. Editorial and user-submitted evidence
+1. Record a running ingestion ledger entry.
+2. Fetch and validate NHTSA results with a bounded timeout.
+3. Resolve source crosswalks and create missing identities.
+4. Atomically persist identities, crosswalks and accurate inserted/updated/rejected counts.
+5. Record failures in the ledger. Network work happens outside the database transaction.
 
-The number is precedence, not a claim of infallibility.
+A tab closed during a request can leave its ledger entry marked running; it never implies completed ingestion.
 
-## Runtime
+## Release
 
-- UI: React 19, Next-compatible App Router, Tailwind 4 and reusable accessible components.
-- Runtime: Vinext on Cloudflare Workers.
-- Database: Cloudflare D1 / SQLite.
-- Schema: Drizzle ORM definitions with generated SQL migrations.
-- Live adapter: NHTSA `GetModelsForMakeYear`.
-- Agent interface: WebMCP catalog-search tool when the browser supports it.
-
-## Implemented workflows
-
-- Pull a US manufacturer/model-year identity set from NHTSA.
-- Store source model IDs as durable crosswalks.
-- Search and filter canonical market variants.
-- Attach manual sourced evidence with method and confidence.
-- Flag conflicting values without deleting either observation.
-- Compare two to four records using best-supported values.
-- Inspect source licence, coverage and adapter readiness.
-- Inspect ingestion history and attribute coverage.
-
-## Adapter contract
-
-Each adapter should have four stages:
-
-1. `fetch(scope)` obtains raw source records.
-2. `normalize(raw)` emits source-neutral identity and observation candidates.
-3. `resolve(candidate)` links or creates canonical identities through crosswalks.
-4. `persist(batch)` writes idempotently and closes the ingestion ledger entry.
-
-Bulk datasets should be processed outside request time and submitted in bounded batches. Store raw downloads externally when auditability demands it; store their checksums and extraction metadata in D1.
+GitHub Actions installs locked dependencies, runs data tests, type-checks and builds static assets, then publishes dist using GitHub Pages. The /MotorAtlas/ base path is explicit. No SQL migrations or server deployment are involved.
 
 ## Next production slices
 
-1. Extract the NHTSA route into a reusable adapter package and add VIN decode.
-2. Add EPA bulk ingestion and crosswalk EPA vehicle IDs to NHTSA identities.
-3. Add EEA type/variant/version ingestion with market and approval identifiers.
-4. Add a candidate-matching queue for uncertain identity resolution.
-5. Add units and attribute-definition tables with conversion rules.
-6. Add conflict review and explicit resolution workflows.
-7. Add scheduled bulk jobs and resumable checkpoints.
-8. Add safety-test entities with protocol-aware comparability.
-9. Add scoring only after coverage thresholds are defined and measured.
+NHTSA VIN decode → EPA enrichment → EEA → VehiclesDB → Wikidata lineage → national registries → OEM extraction → safety agencies → measured tests → scoring after measured coverage thresholds. Add units, uncertain-identity review, conflict resolution and shared-data synchronization as explicit future changes.
