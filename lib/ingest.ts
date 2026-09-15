@@ -112,3 +112,37 @@ export function ingestMarketModels(c: Corpus, records: MarketModel[], sourceId =
   if (!inserted && !updated) throw new Error("The market catalogue contained no valid vehicle identities.");
   return { inserted, updated, rejected };
 }
+
+export type DatedMarketModel = { make: string; model: string; year: number; market: string; body?: string | null; externalId: string };
+
+// A safety agency names a make, a model and a test year in one market. That is a dated
+// market identity, resolved against whatever identities other sources already created.
+export function ingestDatedMarketModels(c: Corpus, records: DatedMarketModel[], sourceId: string, index = identityIndex(c)) {
+  let inserted = 0, updated = 0, rejected = 0;
+  const timestamp = new Date().toISOString();
+  for (const item of records) {
+    const makeName = String(item.make || "").trim(), modelName = String(item.model || "").trim();
+    const market = String(item.market || "").trim().toUpperCase();
+    const year = Number(item.year);
+    if (!makeName || !modelName || !/^[A-Z]{2}$/.test(market) || !Number.isInteger(year) || year < 1981 || !item.externalId) { rejected++; continue; }
+    const make = resolve(c, index, "make", sourceId, `make:${makeName}`, index.makesByName, slug(makeName),
+      () => ({ id: id(), name: makeName, country_code: null, created_at: timestamp }), c.makes, market, timestamp).row;
+    const model = resolve(c, index, "model", sourceId, `model:${makeName}:${modelName}`, index.modelsByName, `${make.id}|${slug(modelName)}`,
+      () => ({ id: id(), make_id: make.id, name: modelName, vehicle_type: "car", created_at: timestamp }), c.models, market, timestamp).row;
+    const variant = resolve(c, index, "variant", sourceId, item.externalId, index.variantsByKey, `${model.id}|${market}|${year}`,
+      () => ({ id: id(), model_id: model.id, generation_id: null, market, model_year: year,
+        trim: null, body_style: item.body || null, powertrain: null, transmission: null, drive_type: null,
+        canonical_name: `${year} ${make.name} ${model.name} · ${market}`, completeness: 5, review_status: "identity_only",
+        created_at: timestamp, updated_at: timestamp }), c.variants, market, timestamp);
+    index.marketPresence.add(`${model.id}|${market}`);
+    if (variant.created) inserted++; else updated++;
+  }
+  if (!inserted && !updated) throw new Error("The assessment set contained no valid vehicle identities.");
+  return { inserted, updated, rejected };
+}
+
+// Resolves the identity a source's external key already points at, for attaching evidence.
+export function variantFor(index: IdentityIndex, sourceId: string, externalId: string) {
+  const entityId = index.crosswalks.get(`${sourceId}|variant|${externalId}`);
+  return entityId ? index.rows.variant.get(entityId) : undefined;
+}

@@ -30,6 +30,8 @@ test("the bundled catalogue loads a multi-market corpus once and stays idempoten
   assert.ok(c.makes.length > 300 && c.models.length > 5000);
   assert.ok(c.variants.some((v) => v.market === "US" && v.model_year !== null));
   assert.ok(c.variants.some((v) => v.market !== "US" && v.model_year === null));
+  assert.ok(c.variants.some((v) => v.market === "IN" && v.model_year !== null));
+  assert.ok(c.observations.some((o) => o.source_id === "bharat-ncap" && o.attribute_key === "safety_rating"));
   validateBackup({ format: "motoratlas", version: 1, tables: c });
 
   const identities = c.variants.length, models = c.models.length;

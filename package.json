@@ -1,6 +1,6 @@
 {
   "name": "motoratlas",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -9,8 +9,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "tsx --test tests/*.test.ts",
-    "seed": "node scripts/build-seed.mjs && node scripts/build-seed-vehiclesdb.mjs"
+    "test": "tsx --test tests/corpus.test.ts tests/seed.test.ts",
+    "seed": "node scripts/build-seed.mjs && node scripts/build-seed-vehiclesdb.mjs && node scripts/build-seed-india.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

@@ -16,16 +16,21 @@ if (channel) { channel.onmessage = () => { cache = undefined; }; (channel as unk
 
 function openDb() {
   if (!connection) connection = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("motoratlas-corpus", 1);
+    const request = indexedDB.open("motoratlas-corpus", 2);
     request.onupgradeneeded = () => {
-      for (const name of TABLES) request.result.createObjectStore(name, { keyPath: "id" });
+      for (const name of TABLES) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, { keyPath: "id" });
       const sources = request.transaction!.objectStore("sources");
-      for (const source of SOURCE_CATALOG) sources.add({
+      // Registered sources are installed data, not user evidence: add the ones this build
+      // knows about and leave every stored row untouched.
+      for (const source of SOURCE_CATALOG) sources.get(source.id).onsuccess = (event) => {
+        if ((event.target as IDBRequest).result) return;
+        sources.put({
         id: source.id, name: source.name, source_type: source.sourceType, geography: source.geography,
         license: source.license, reuse_status: source.reuseStatus, access_mode: source.accessMode,
         authority_rank: source.authorityRank, coverage_tags: JSON.stringify(source.coverageTags),
         homepage_url: source.homepageUrl, adapter_status: source.adapterStatus, created_at: new Date().toISOString(),
-      });
+        });
+      };
     };
     request.onsuccess = () => {
       request.result.onversionchange = () => { request.result.close(); connection = undefined; };

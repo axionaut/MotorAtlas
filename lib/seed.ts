@@ -1,5 +1,6 @@
 import { withCorpus, type Corpus } from "./browser-db";
-import { identityIndex, ingestMarketModels, ingestModels, type MarketModel, type NhtsaModel } from "./ingest";
+import { addObservation } from "./corpus";
+import { identityIndex, ingestDatedMarketModels, ingestMarketModels, ingestModels, variantFor, type MarketModel, type NhtsaModel } from "./ingest";
 
 export type SeedDescriptor = { id: string; file: string; sourceId: string; adapter: string; label: string };
 
@@ -8,6 +9,7 @@ export type SeedDescriptor = { id: string; file: string; sourceId: string; adapt
 export const SEEDS: SeedDescriptor[] = [
   { id: "nhtsa-car-identities", file: "seed/nhtsa-car-identities.json", sourceId: "nhtsa-vpic", adapter: "seed-model-years", label: "US model-year identities" },
   { id: "vehiclesdb-markets", file: "seed/vehiclesdb-markets.json", sourceId: "vehiclesdb", adapter: "seed-market-presence", label: "Global market presence" },
+  { id: "india-bncap", file: "seed/india-bncap.json", sourceId: "bharat-ncap", adapter: "seed-bharat-ncap", label: "Bharat NCAP assessments" },
 ];
 
 type SeedPayload = { format?: string; version?: number; source?: string; generatedAt?: string; years?: [number, number]; records?: unknown[] };
@@ -38,7 +40,23 @@ export function applySeed(c: Corpus, seed: SeedDescriptor, payload: SeedPayload)
     }
     for (const [year, group] of [...byYear].sort((a, b) => a[0] - b[0])) add(ingestModels(c, group, year, index));
   } else {
-    add(ingestMarketModels(c, payload.records as MarketModel[], seed.sourceId, index));
+    if (seed.adapter === "seed-bharat-ncap") {
+      const records = payload.records as Array<{ make: string; model: string; year: number; body?: string | null; adult: number; child?: number | null; weightKg?: number | null; url: string }>;
+      add(ingestDatedMarketModels(c, records.map((record) => ({ make: record.make, model: record.model, year: record.year,
+        market: "IN", body: record.body, externalId: record.url })), seed.sourceId, index));
+      for (const record of records) {
+        const variant = variantFor(index, seed.sourceId, record.url);
+        if (!variant) throw new Error("Bharat NCAP seed crosswalk did not resolve its variant.");
+        addObservation(c, { variantId: variant.id, sourceId: seed.sourceId, attributeKey: "safety_rating",
+          value: record.adult, unit: "points", method: "documented", sourceUrl: record.url, confidence: 95 });
+        if (record.child != null) addObservation(c, { variantId: variant.id, sourceId: seed.sourceId, attributeKey: "child_occupant_score",
+          value: record.child, unit: "points", method: "documented", sourceUrl: record.url, confidence: 95 });
+        if (record.weightKg != null) addObservation(c, { variantId: variant.id, sourceId: seed.sourceId, attributeKey: "crash_test_weight_kg",
+          value: record.weightKg, unit: "kg", method: "documented", sourceUrl: record.url, confidence: 95 });
+      }
+    } else {
+      add(ingestMarketModels(c, payload.records as MarketModel[], seed.sourceId, index));
+    }
   }
   c.ingestion_runs.push({ id: crypto.randomUUID(), source_id: seed.sourceId, adapter: seed.adapter, status: "completed",
     scope: marker(seed, payload), fetched: payload.records!.length, inserted: totals.inserted, updated: totals.updated,
