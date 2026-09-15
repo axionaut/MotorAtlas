@@ -7,6 +7,13 @@ export type Corpus = Record<Table, Row[]>;
 export const emptyCorpus = (): Corpus => ({ sources: [], makes: [], models: [], generations: [], variants: [], observations: [], source_crosswalks: [], ingestion_runs: [], conflicts: [] });
 let connection: Promise<IDBDatabase> | undefined;
 
+// A seeded corpus is tens of thousands of rows, so reads serve a cached snapshot instead
+// of re-reading every store per request. Writes replace it and tell other tabs to drop
+// theirs. Read callbacks must not mutate their corpus; only write callbacks may.
+let cache: Corpus | undefined;
+const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("motoratlas-corpus");
+if (channel) { channel.onmessage = () => { cache = undefined; }; (channel as unknown as { unref?: () => void }).unref?.(); }
+
 function openDb() {
   if (!connection) connection = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("motoratlas-corpus", 1);
@@ -30,9 +37,28 @@ function openDb() {
   return connection;
 }
 
+// Only rows the callback added or changed are written back. A seeded corpus holds tens of
+// thousands of identities; rewriting every row on every save would stall the UI.
+const snapshot = (corpus: Corpus) => {
+  const rows = new Map<string, string>();
+  for (const name of TABLES) for (const row of corpus[name]) rows.set(name + "|" + row.id, JSON.stringify(row));
+  return rows;
+};
+function persist(tx: IDBTransaction, corpus: Corpus, before: Map<string, string>) {
+  for (const name of TABLES) {
+    const store = tx.objectStore(name);
+    for (const row of corpus[name]) {
+      const key = name + "|" + row.id;
+      const current = JSON.stringify(row);
+      if (before.get(key) !== current) store.put(row);
+    }
+  }
+}
+
 // Read and mutate within one IndexedDB transaction, including across browser tabs.
 // A rejected callback aborts every write; callers see success only after commit.
 export async function withCorpus<T>(write: boolean, callback: (corpus: Corpus) => T): Promise<T> {
+  if (!write && cache) return callback(cache);
   const db = await openDb();
   return new Promise<T>((resolve, reject) => {
     const tx = db.transaction([...TABLES], write ? "readwrite" : "readonly");
@@ -40,8 +66,8 @@ export async function withCorpus<T>(write: boolean, callback: (corpus: Corpus) =
     let pending = TABLES.length;
     let result: T;
     let failure: unknown;
-    tx.oncomplete = () => resolve(result);
-    tx.onabort = () => reject(failure || tx.error || new Error("Could not save data. Check available browser storage."));
+    tx.oncomplete = () => { cache = corpus; if (write) channel?.postMessage("changed"); resolve(result); };
+    tx.onabort = () => { cache = undefined; reject(failure || tx.error || new Error("Could not save data. Check available browser storage.")); };
     tx.onerror = () => { failure ??= tx.error; };
     for (const name of TABLES) {
       const request = tx.objectStore(name).getAll();
@@ -49,8 +75,9 @@ export async function withCorpus<T>(write: boolean, callback: (corpus: Corpus) =
         corpus[name] = request.result;
         if (--pending !== 0) return;
         try {
+          const before = write ? snapshot(corpus) : null;
           result = callback(corpus);
-          if (write) for (const table of TABLES) for (const row of corpus[table]) tx.objectStore(table).put(row);
+          if (before) persist(tx, corpus, before);
         } catch (error) { failure = error; tx.abort(); }
       };
     }

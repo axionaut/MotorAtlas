@@ -33,11 +33,14 @@ export function overview(c: Corpus) {
     }).sort((a, b) => b.vehicles - a.vehicles),
   };
 }
-export function catalog(c: Corpus, query = "", market = "") {
+// The catalogue holds tens of thousands of seeded identities; the response is a page,
+// and the total count keeps the unlisted remainder visible instead of silently truncated.
+export function catalog(c: Corpus, query = "", market = "", limit = 200) {
   const q = query.trim().toLowerCase();
-  return { vehicles: c.variants.filter((v) => (!market || v.market === market) && String(v.canonical_name).toLowerCase().includes(q))
-    .sort((a, b) => Number(b.model_year) - Number(a.model_year) || String(a.canonical_name).localeCompare(String(b.canonical_name)))
-    .map((v) => vehicle(c, v)), markets: unique(c.variants.map((v) => v.market)).sort() };
+  const matched = c.variants.filter((v) => (!market || v.market === market) && String(v.canonical_name).toLowerCase().includes(q))
+    .sort((a, b) => Number(b.model_year ?? 0) - Number(a.model_year ?? 0) || String(a.canonical_name).localeCompare(String(b.canonical_name)));
+  return { vehicles: matched.slice(0, Math.max(1, Math.min(500, limit))).map((v) => vehicle(c, v)),
+    total: matched.length, markets: unique(c.variants.map((v) => v.market)).sort() };
 }
 export function compare(c: Corpus, ids: string[]) {
   const rows = unique(ids).slice(0, 4).map((key) => find(c.variants, key)).filter((r): r is Row => !!r);
@@ -47,38 +50,6 @@ export function compare(c: Corpus, ids: string[]) {
   return { vehicles: rows.map((v) => vehicle(c, v)), attributes: unique(evidence.map((o) => String(o.attribute_key))).sort().map((key) => ({
     attributeKey: key, values: rows.map((v) => { const o = evidence.find((item) => item.variant_id === v.id && item.attribute_key === key); return o ? observation(c, o) : null; }),
   })) };
-}
-
-export type NhtsaModel = { Make_ID: number; Make_Name: string; Model_ID: number; Model_Name: string };
-export function ingestModels(c: Corpus, results: NhtsaModel[], year: number) {
-  let inserted = 0, updated = 0, rejected = 0;
-  const seen = new Set<number>();
-  const timestamp = now();
-  function resolve(entity: string, external: string, create: () => Row, rows: Row[]) {
-    const xw = c.source_crosswalks.find((x) => x.source_id === "nhtsa-vpic" && x.entity_type === entity && x.external_id === external);
-    if (xw) {
-      const existing = find(rows, String(xw.entity_id));
-      if (!existing) throw new Error("Source crosswalk references a missing identity.");
-      return existing;
-    }
-    const row = create(); rows.push(row);
-    c.source_crosswalks.push({ id: id(), source_id: "nhtsa-vpic", entity_type: entity, entity_id: row.id, external_id: external, market: "US", created_at: timestamp });
-    return row;
-  }
-  for (const item of results) {
-    if (!Number.isInteger(item.Make_ID) || item.Make_ID <= 0 || !Number.isInteger(item.Model_ID) || item.Model_ID <= 0
-      || !item.Make_Name?.trim() || !item.Model_Name?.trim() || seen.has(item.Model_ID)) { rejected++; continue; }
-    seen.add(item.Model_ID);
-    const make = resolve("make", String(item.Make_ID), () => ({ id: id(), name: item.Make_Name.trim(), country_code: null, created_at: timestamp }), c.makes);
-    const model = resolve("model", String(item.Model_ID), () => ({ id: id(), make_id: make.id, name: item.Model_Name.trim(), vehicle_type: null, created_at: timestamp }), c.models);
-    const count = c.variants.length;
-    resolve("variant", `${item.Model_ID}:US:${year}`, () => ({ id: id(), model_id: model.id, generation_id: null, market: "US", model_year: year,
-      trim: null, body_style: null, powertrain: null, transmission: null, drive_type: null,
-      canonical_name: `${year} ${make.name} ${model.name} · US`, completeness: 5, review_status: "identity_only", created_at: timestamp, updated_at: timestamp }), c.variants);
-    if (c.variants.length > count) inserted++; else updated++;
-  }
-  if (!inserted && !updated) throw new Error("NHTSA returned no valid vehicle identities.");
-  return { inserted, updated, rejected };
 }
 
 export function addObservation(c: Corpus, body: Record<string, unknown>) {
@@ -143,8 +114,13 @@ export function validateBackup(input: unknown): Corpus {
     if (!Number.isFinite(o.confidence) || Number(o.confidence) < 1 || Number(o.confidence) > 100 || (o.value_number == null && typeof o.value_text !== "string")) throw new Error("Invalid evidence value or confidence.");
     if (o.source_url && !["https:", "http:"].includes(new URL(String(o.source_url)).protocol)) throw new Error("Invalid evidence URL.");
   }
+  // Reference checks run over id sets: a seeded corpus holds tens of thousands of rows
+  // and linear scans per reference would stall the import.
+  const keys = new Map<Row[], Set<string>>();
+  const idsOf = (rows: Row[]) => { let set = keys.get(rows); if (!set) { set = new Set(rows.map((row) => row.id)); keys.set(rows, set); } return set; };
   const refs = (rows: Row[], key: string, targets: Row[], optional = false) => {
-    for (const row of rows) if (!(optional && row[key] == null) && !find(targets, String(row[key]))) throw new Error(`Broken backup reference: ${key}.`);
+    const ids = idsOf(targets);
+    for (const row of rows) if (!(optional && row[key] == null) && !ids.has(String(row[key]))) throw new Error(`Broken backup reference: ${key}.`);
   };
   refs(c.models, "make_id", c.makes); refs(c.generations, "model_id", c.models);
   refs(c.variants, "model_id", c.models); refs(c.variants, "generation_id", c.generations, true);
@@ -156,7 +132,7 @@ export function validateBackup(input: unknown): Corpus {
   for (const xw of c.source_crosswalks) {
     const target = ({ make: c.makes, model: c.models, generation: c.generations, variant: c.variants } as Record<string, Row[]>)[String(xw.entity_type)];
     const key = JSON.stringify([xw.source_id, xw.entity_type, xw.external_id]);
-    if (!target || !find(target, String(xw.entity_id)) || links.has(key)) throw new Error("Invalid or duplicate source crosswalk.");
+    if (!target || !idsOf(target).has(String(xw.entity_id)) || links.has(key)) throw new Error("Invalid or duplicate source crosswalk.");
     links.add(key);
   }
   return c;
@@ -167,12 +143,15 @@ export function validateBackup(input: unknown): Corpus {
 export function mergeBackup(c: Corpus, incoming: Corpus) {
   const signature = (row: Row) => JSON.stringify(Object.entries(row).sort(([a], [b]) => a.localeCompare(b)));
   let added = 0;
-  for (const table of TABLES) for (const row of incoming[table]) {
-    const existing = find(c[table], row.id);
-    if (existing) {
-      if (table === "sources") continue; // Installed source authority stays authoritative.
-      if (signature(existing) !== signature(row)) throw new Error("Backup overlaps changed records. Restore it in a separate browser to keep both versions.");
-    } else { c[table].push(row); added++; }
+  for (const table of TABLES) {
+    const stored = new Map(c[table].map((row) => [row.id, row]));
+    for (const row of incoming[table]) {
+      const existing = stored.get(row.id);
+      if (existing) {
+        if (table === "sources") continue; // Installed source authority stays authoritative.
+        if (signature(existing) !== signature(row)) throw new Error("Backup overlaps changed records. Restore it in a separate browser to keep both versions.");
+      } else { c[table].push(row); stored.set(row.id, row); added++; }
+    }
   }
   validateBackup({ format: "motoratlas", version: 1, tables: c });
   return added;

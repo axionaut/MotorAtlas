@@ -6,11 +6,24 @@ MotorAtlas is a static React 19 application built with Vite and Tailwind 4, publ
 
 The browser renders the UI, reads/writes IndexedDB, and fetches NHTSA directly using its public CORS-enabled API. lib/browser-api.ts provides an in-process interface; its operation paths are never HTTP requests. No backend proxy or credentials are required.
 
+Writes are differential: withCorpus stores only rows a callback added or changed, so a seeded corpus does not rewrite tens of thousands of rows on every save. Catalogue responses are paged (200 rows by default) and report the full match count.
+
 The motoratlas-corpus IndexedDB database has nine stores: sources, makes, models, generations, variants, observations, source_crosswalks, ingestion_runs, conflicts. Each store uses id as its key. Sources are initialized only when the database is first created. Transactions serialize writes across tabs and commit all identity/evidence changes atomically. A failed transaction leaves stored data unchanged.
 
 Data belongs to each browser installation. This release does not provide a shared editable cloud corpus or automatic cross-device synchronization. Export/import transfers a versioned JSON backup with all provenance. Imports validate references and merge additively; conflicting record IDs abort without overwriting stored records.
 
 The previous hosted D1 database was inspected during migration on 2026-09-15: all eight non-source tables were empty; only the ten source registry rows existed. The registry is preserved in lib/source-catalog.ts. No old service is consulted at runtime.
+
+## Bundled catalogue
+
+The application ships a generated seed so a fresh browser opens with a comparable, multi-market catalogue instead of an empty schema. public/seed holds two files, built by `pnpm run seed`:
+
+- `nhtsa-car-identities.json` — NHTSA vPIC car makes for 2015-2026, giving dated United States identities.
+- `vehiclesdb-markets.json` — VehiclesDB (CC BY 4.0) car models and the markets that register them, giving global presence across ar, ca, de, es, fi, gb, ie, lu, my, nl, nz, th, ua and us.
+
+lib/seed.ts applies each file on first load inside one transaction and records the applied seed version in the ingestion ledger, so seeds never load twice and a regenerated seed upgrades identities without duplicating them. A failed fetch is not fatal: the app opens with whatever the browser already holds.
+
+VehiclesDB has no model years, so its identities are year-open (`model_year` null) and are created only for markets no dated identity already covers. Dated national adapters enrich a market later without erasing its presence record. CC BY 4.0 requires the visible VehiclesDB credit in the application footer; it is a licence condition, not decoration.
 
 ## Identity graph
 
@@ -27,6 +40,10 @@ Comparison chooses lowest source authority rank, then highest confidence, with a
 Authority precedence: regulatory; OEM/government register; safety agencies; open catalogues; knowledge graphs; measured tests; editorial/user evidence. Claimed, regulatory, measured, owner-reported and derived methods remain distinct.
 
 ## Ingestion
+
+Identity resolution lives in lib/ingest.ts and runs over indexes built once per call, because a seeded corpus holds tens of thousands of identities. A source's external key resolves through source_crosswalks first; failing that, a normalised make/model name matches an identity another source already created, and only then is a new identity minted. Every source that names an identity gets its own crosswalk row.
+
+The bulk adapter (`bulkIngestNhtsa`) enumerates every NHTSA car manufacturer and refreshes a year range without an operator naming vehicles. It writes one ledger entry, commits per manufacturer so an interrupted run keeps resolved identities, and records a stopped run as stopped rather than completed.
 
 1. Record a running ingestion ledger entry.
 2. Fetch and validate NHTSA results with a bounded timeout.

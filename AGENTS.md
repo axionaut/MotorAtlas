@@ -15,9 +15,16 @@ Read `ARCHITECTURE.md` before changing identity, ingestion, provenance, conflict
 9. Crash scores require agency, protocol version, test year, market, and applicable configuration before comparison.
 10. Scoring remains downstream of data coverage and validation. Never manufacture a score from absent evidence.
 
+11. The catalogue must be usable without an operator naming vehicles. Manual per-vehicle entry is an advanced path, never the primary one.
+12. Regenerate bundled seeds with `pnpm run seed`; never hand-edit public/seed. Keep the VehiclesDB credit visible while its data ships.
+
 ## Safe continuation order
 
 NHTSA vPIC → EPA FuelEconomy → EEA CO₂ → VehiclesDB → Wikidata lineage → national registries → OEM document extraction → safety agencies → measured tests → scoring.
+
+## Versioning
+
+Bump the `version` field in package.json on every deploy. vite.config.ts injects it as `__APP_VERSION__` and the header renders it, so the running build is identifiable; never hard-code a version string in the interface.
 
 ## Before committing
 

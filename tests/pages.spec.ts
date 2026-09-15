@@ -12,8 +12,15 @@ test("Pages app imports, preserves evidence, compares and survives reload withou
   ] } }));
   await page.goto(process.env.MOTORATLAS_TEST_URL || "http://127.0.0.1:4173/MotorAtlas/");
   await expect(page.getByRole("heading", { name: "MotorAtlas", exact: true })).toBeVisible();
+  // The bundled catalogue populates several markets before anyone asks for a vehicle.
+  const search = page.getByPlaceholder("Make, model, trim…");
+  await search.fill("Octavia · DE");
+  await expect(page.getByText("Škoda Octavia · DE", { exact: true })).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText("Vehicle data by VehiclesDB", { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Ingestion", exact: true }).click();
-  await page.getByRole("button", { name: "Run ingestion", exact: true }).click();
+  await page.getByText("Single manufacturer pull").click();
+  await page.getByRole("button", { name: "Run single pull", exact: true }).click();
+  await search.fill("Toyota Corolla · US");
   await expect(page.getByText("2026 Toyota Corolla · US", { exact: true })).toBeVisible();
   await page.getByText("2026 Toyota Corolla · US", { exact: true }).click();
   await page.getByLabel("Attribute", { exact: true }).fill("power_kw");
@@ -23,7 +30,9 @@ test("Pages app imports, preserves evidence, compares and survives reload withou
   await expect(page.getByText("100 kW", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
   await page.reload();
+  await page.getByPlaceholder("Make, model, trim…").fill("Toyota Co");
   await page.getByRole("checkbox", { name: "Compare 2026 Toyota Corolla · US" }).check();
+  await page.getByPlaceholder("Make, model, trim…").fill("Toyota Ca");
   await page.getByRole("checkbox", { name: "Compare 2026 Toyota Camry · US" }).check();
   await page.getByRole("tab", { name: /Compare/ }).click();
   await expect(page.getByText("100 kW", { exact: true })).toBeVisible();
