@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptyCorpus, withCorpus, type Corpus } from "../lib/browser-db";
-import { addObservation, compare, mergeBackup, validateBackup } from "../lib/corpus";
+import { addObservation, catalog, compare, mergeBackup, validateBackup } from "../lib/corpus";
 import { ingestMarketModels, ingestModels } from "../lib/ingest";
 import { atlasRequest } from "../lib/browser-api";
 
@@ -107,4 +107,31 @@ test("a later dated pull enriches a market already present without erasing it", 
   ingestModels(c, [{ Make_ID: 448, Make_Name: "Toyota", Model_ID: 2208, Model_Name: "Corolla" }], 2024);
   assert.equal(c.variants.length, before + 1);
   assert.equal(c.variants.filter((v) => v.market === "DE").length, 2);
+});
+
+test("spec score ranks only on evidence and never invents a value", () => {
+  const c = fixture();
+  const [first, second] = c.variants;
+  assert.equal(catalog(c).vehicles[0].specScore, null); // identities alone are unscored
+  const graded = (variantId: string, attributeKey: string, value: string, sourceId = "nhtsa-vpic") =>
+    addObservation(c, { variantId, attributeKey, value, sourceId, method: "regulatory", confidence: 95 });
+  graded(first.id, "safety_rating", "5");
+  graded(second.id, "safety_rating", "3");
+  graded(first.id, "co2_g_km", "180");
+  graded(second.id, "co2_g_km", "120");
+
+  const ranked = catalog(c).vehicles;
+  assert.equal(ranked.length, 2);
+  assert.equal(ranked[0].id, first.id); // safety outweighs emissions
+  assert.equal(ranked[0].specScore, 63);
+  assert.equal(ranked[1].specScore, 38);
+  for (const item of ranked) assert.equal(item.scoreCoverage, 40); // 25 + 15 of 100 weight
+  assert.equal(catalog(c).scored, 2);
+
+  // An unscored identity sorts after scored ones instead of being given a number.
+  ingestModels(c, [{ Make_ID: 448, Make_Name: "Toyota", Model_ID: 2210, Model_Name: "Yaris" }], 2026);
+  const withUnscored = catalog(c).vehicles;
+  assert.equal(withUnscored.length, 3);
+  assert.equal(withUnscored[2].specScore, null);
+  assert.equal(withUnscored[2].model, "Yaris");
 });

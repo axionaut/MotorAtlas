@@ -1,4 +1,5 @@
 import { type Corpus, type Row, TABLES } from "./browser-db";
+import { specScores, type SpecScore } from "./score";
 
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -8,11 +9,12 @@ const camel = (row: Row) => Object.fromEntries(Object.entries(row).map(([key, va
 export function sources(c: Corpus) {
   return c.sources.map((row) => ({ ...camel(row), coverageTags: JSON.parse(String(row.coverage_tags)) }));
 }
-export function vehicle(c: Corpus, row: Row) {
+export function vehicle(c: Corpus, row: Row, score?: SpecScore) {
   const model = find(c.models, String(row.model_id));
   const evidence = c.observations.filter((o) => o.variant_id === row.id);
   return { ...camel(row), make: model ? find(c.makes, String(model.make_id))?.name : null, model: model?.name,
-    observationCount: evidence.length, sourceCount: unique(evidence.map((o) => o.source_id)).length };
+    observationCount: evidence.length, sourceCount: unique(evidence.map((o) => o.source_id)).length,
+    specScore: score?.score ?? null, scoreCoverage: score?.coverage ?? 0, scoreCriteria: score?.criteria ?? [] };
 }
 export function observation(c: Corpus, row: Row) {
   const source = find(c.sources, String(row.source_id));
@@ -37,17 +39,27 @@ export function overview(c: Corpus) {
 // and the total count keeps the unlisted remainder visible instead of silently truncated.
 export function catalog(c: Corpus, query = "", market = "", limit = 200) {
   const q = query.trim().toLowerCase();
+  const scores = specScores(c);
+  const presence = new Map<string, number>();
+  for (const v of c.variants) presence.set(String(v.model_id), (presence.get(String(v.model_id)) || 0) + 1);
+  const rank = (v: Row) => scores.get(v.id)?.score ?? -1;
   const matched = c.variants.filter((v) => (!market || v.market === market) && String(v.canonical_name).toLowerCase().includes(q))
-    .sort((a, b) => Number(b.model_year ?? 0) - Number(a.model_year ?? 0) || String(a.canonical_name).localeCompare(String(b.canonical_name)));
-  return { vehicles: matched.slice(0, Math.max(1, Math.min(500, limit))).map((v) => vehicle(c, v)),
-    total: matched.length, markets: unique(c.variants.map((v) => v.market)).sort() };
+    .sort((a, b) => rank(b) - rank(a)
+      || Number(scores.get(b.id)?.coverage ?? 0) - Number(scores.get(a.id)?.coverage ?? 0)
+      || (presence.get(String(b.model_id)) || 0) - (presence.get(String(a.model_id)) || 0)
+      || Number(b.model_year ?? 0) - Number(a.model_year ?? 0)
+      || String(a.canonical_name).localeCompare(String(b.canonical_name)));
+  return { vehicles: matched.slice(0, Math.max(1, Math.min(500, limit))).map((v) => vehicle(c, v, scores.get(v.id))),
+    total: matched.length, scored: [...scores.values()].filter((s) => s.score !== null).length,
+    markets: unique(c.variants.map((v) => v.market)).sort() };
 }
 export function compare(c: Corpus, ids: string[]) {
+  const scores = specScores(c);
   const rows = unique(ids).slice(0, 4).map((key) => find(c.variants, key)).filter((r): r is Row => !!r);
   const evidence = c.observations.filter((o) => rows.some((v) => v.id === o.variant_id));
   evidence.sort((a, b) => Number(find(c.sources, String(a.source_id))?.authority_rank ?? 999) - Number(find(c.sources, String(b.source_id))?.authority_rank ?? 999)
     || Number(b.confidence) - Number(a.confidence) || a.id.localeCompare(b.id));
-  return { vehicles: rows.map((v) => vehicle(c, v)), attributes: unique(evidence.map((o) => String(o.attribute_key))).sort().map((key) => ({
+  return { vehicles: rows.map((v) => vehicle(c, v, scores.get(v.id))), attributes: unique(evidence.map((o) => String(o.attribute_key))).sort().map((key) => ({
     attributeKey: key, values: rows.map((v) => { const o = evidence.find((item) => item.variant_id === v.id && item.attribute_key === key); return o ? observation(c, o) : null; }),
   })) };
 }

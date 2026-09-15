@@ -39,6 +39,19 @@ Comparison chooses lowest source authority rank, then highest confidence, with a
 
 Authority precedence: regulatory; OEM/government register; safety agencies; open catalogues; knowledge graphs; measured tests; editorial/user evidence. Claimed, regulatory, measured, owner-reported and derived methods remain distinct.
 
+## Spec score
+
+lib/score.ts grades a variant against seven weighted criteria: safety 25, efficiency 20, emissions 15, power 15, usable range 10, torque 10, occupant protection 5. Each criterion lists the attribute keys that satisfy it and whether higher or lower is better.
+
+The rules that keep the score honest:
+
+- A criterion with no observation contributes nothing and lowers `scoreCoverage`; it is never imputed from a class average or a sibling variant.
+- A variant with no graded evidence scores `null`, not zero, and the interface says "No graded evidence" rather than showing a bar.
+- Values are normalised against the observed range for that criterion across the corpus, so a score means "better than the field currently holds", never an absolute verdict. A criterion observed on a single vehicle normalises to 0.5 because a field of one cannot rank anything.
+- The value used per criterion is the best-supported observation: lowest source authority rank, then highest confidence, then stable id — the same precedence comparison uses.
+
+The catalogue orders by score, then coverage, then how many markets list the model, then year. Unscored identities therefore sort last instead of burying evidenced vehicles alphabetically.
+
 ## Ingestion
 
 Identity resolution lives in lib/ingest.ts and runs over indexes built once per call, because a seeded corpus holds tens of thousands of identities. A source's external key resolves through source_crosswalks first; failing that, a normalised make/model name matches an identity another source already created, and only then is a new identity minted. Every source that names an identity gets its own crosswalk row.
