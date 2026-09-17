@@ -42,12 +42,18 @@ Authority precedence: regulatory; OEM/government register; safety agencies; open
 ## Spec score
 
 lib/score.ts grades a variant against seven weighted criteria: safety 25, efficiency 20, emissions 15, power 15, usable range 10, torque 10, occupant protection 5. Each criterion lists the attribute keys that satisfy it and whether higher or lower is better.
+lib/score.ts grades a variant across four consumer-facing clusters with individual sub-scores and weights:
+- **Safety & Protection (30%)**: Safety assessment (`safety_rating`, `ncap_overall_stars`, `euro_ncap_stars`) 20, Occupant protection (`child_occupant_score`, `occupant_protection_percent`, `airbags`) 10.
+- **Performance & Dynamics (35%)**: Power (`power_kw`, `power_ps`, `power_hp`) 15, Torque (`torque_nm`) 10, Acceleration (`acceleration_0_100_s`, `zero_to_sixty_mph_s`) 5, Top speed (`top_speed_kmh`, `top_speed_mph`) 5.
+- **Range & Efficiency (30%)**: Usable range (`range_km`, `electric_range_km`, `range_miles`) 15, Efficiency (`fuel_consumption_l_100km`, `combined_l_100km`, `consumption_kwh_100km`) 10, Emissions (`co2_g_km`, `co2_tailpipe_g_km`) 5.
+- **Dimensions & Utility (5%)**: Cargo capacity (`cargo_volume_l`, `boot_space_l`, `cargo_volume_cu_ft`) 5.
 
 The rules that keep the score honest:
 
 - A criterion with no observation contributes nothing and lowers `scoreCoverage`; it is never imputed from a class average or a sibling variant.
 - A variant with no graded evidence scores `null`, not zero, and the interface says "No graded evidence" rather than showing a bar.
 - Values are normalised against the observed range for that criterion across the corpus, so a score means "better than the field currently holds", never an absolute verdict. A criterion observed on a single vehicle normalises to 0.5 because a field of one cannot rank anything.
+- Cluster sub-scores provide breakdown visibility across Safety, Performance, Energy, and Utility alongside the composite score.
 - The value used per criterion is the best-supported observation: lowest source authority rank, then highest confidence, then stable id — the same precedence comparison uses.
 
 The catalogue orders by score, then coverage, then how many markets list the model, then year. Unscored identities therefore sort last instead of burying evidenced vehicles alphabetically.

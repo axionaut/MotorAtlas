@@ -14,7 +14,8 @@ export function vehicle(c: Corpus, row: Row, score?: SpecScore) {
   const evidence = c.observations.filter((o) => o.variant_id === row.id);
   return { ...camel(row), make: model ? find(c.makes, String(model.make_id))?.name : null, model: model?.name,
     observationCount: evidence.length, sourceCount: unique(evidence.map((o) => o.source_id)).length,
-    specScore: score?.score ?? null, scoreCoverage: score?.coverage ?? 0, scoreCriteria: score?.criteria ?? [] };
+    specScore: score?.score ?? null, scoreCoverage: score?.coverage ?? 0, scoreCriteria: score?.criteria ?? [],
+    scoreClusters: score?.clusters ?? [] };
 }
 export function observation(c: Corpus, row: Row) {
   const source = find(c.sources, String(row.source_id));

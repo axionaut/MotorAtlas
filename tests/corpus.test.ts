@@ -123,10 +123,23 @@ test("spec score ranks only on evidence and never invents a value", () => {
   const ranked = catalog(c).vehicles;
   assert.equal(ranked.length, 2);
   assert.equal(ranked[0].id, first.id); // safety outweighs emissions
-  assert.equal(ranked[0].specScore, 63);
-  assert.equal(ranked[1].specScore, 38);
-  for (const item of ranked) assert.equal(item.scoreCoverage, 40); // 25 + 15 of 100 weight
+  assert.equal(ranked[0].specScore, 80);
+  assert.equal(ranked[1].specScore, 20);
+  for (const item of ranked) assert.equal(item.scoreCoverage, 25); // 20 + 5 of 100 weight
   assert.equal(catalog(c).scored, 2);
+
+  // Clusters are calculated and exposed
+  const firstSafety = ranked[0].scoreClusters?.find((cl) => cl.cluster === "safety");
+  assert.equal(firstSafety?.score, 100);
+  assert.equal(firstSafety?.coverage, 67); // 20 of 30 cluster weight
+
+  // Child occupant protection is mapped to occupant_protection criterion
+  graded(first.id, "child_occupant_score", "40");
+  graded(second.id, "child_occupant_score", "30");
+  const updated = catalog(c).vehicles;
+  assert.equal(updated[0].scoreCoverage, 35); // 20 + 10 + 5 of 100 weight
+  const updatedSafety = updated[0].scoreClusters?.find((cl) => cl.cluster === "safety");
+  assert.equal(updatedSafety?.coverage, 100); // 30 of 30 cluster weight
 
   // An unscored identity sorts after scored ones instead of being given a number.
   ingestModels(c, [{ Make_ID: 448, Make_Name: "Toyota", Model_ID: 2210, Model_Name: "Yaris" }], 2026);
